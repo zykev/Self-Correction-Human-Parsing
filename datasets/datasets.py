@@ -199,3 +199,84 @@ class LIPDataValSet(data.Dataset):
         }
 
         return batch_input_im, meta
+
+class SMPLicitValSet(data.Dataset):
+    def __init__(self, folders, crop_size=[473, 473], img_size=[1280, 940], transform=None, flip=False):
+        self.crop_size = crop_size
+        self.transform = transform
+        self.flip = flip
+        self.aspect_ratio = crop_size[1] * 1.0 / crop_size[0]
+        self.crop_size = np.asarray(crop_size)
+
+        self.val_list = self.get_image_ls(folders)
+        self.number_samples = len(self.val_list)
+
+        # Get person center and scale
+        self.w = img_size[1] - 1
+        self.h = img_size[0] - 1
+        self.person_center, self.s = self._box2cs()
+
+    def __len__(self):
+        return len(self.val_list)
+
+    def _box2cs(self):
+        return self._xywh2cs(0, 0)
+
+    def _xywh2cs(self, x, y):
+        center = np.zeros((2), dtype=np.float32)
+        center[0] = x + self.w * 0.5
+        center[1] = y + self.h * 0.5
+        if self.w > self.aspect_ratio * self.h:
+            h = self.w * 1.0 / self.aspect_ratio
+            w = self.w
+        elif self.w < self.aspect_ratio * self.h:
+            w = self.h * self.aspect_ratio
+            h = self.h
+        else:
+            w = self.w
+            h = self.h
+        scale = np.array([w * 1.0, h * 1.0], dtype=np.float32)
+
+        return center, scale
+    
+    def get_image_ls(self, folders):
+        img_ls = []
+        for folder in folders:
+            path_image = folder['path_image']
+            img_ls.extend(path_image)
+        
+        return img_ls
+
+    def __getitem__(self, index):
+        val_item = self.val_list[index]
+        # Load training image
+        im = cv2.imread(val_item, cv2.IMREAD_COLOR)
+        h, w, _ = im.shape
+        
+        r = 0
+        trans = get_affine_transform(self.person_center, self.s, r, self.crop_size)
+        input = cv2.warpAffine(
+            im,
+            trans,
+            (int(self.crop_size[1]), int(self.crop_size[0])),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=(0, 0, 0))
+        input = self.transform(input)
+        flip_input = input.flip(dims=[-1])
+        if self.flip:
+            batch_input_im = torch.stack([input, flip_input])
+        else:
+            batch_input_im = input
+
+        # meta = {
+        #     'name': val_item.split('/')[-1],
+        #     # 'center': person_center,
+        #     # 'height': h,
+        #     # 'width': w,
+        #     # 'scale': s,
+        #     # 'rotation': r
+        # }
+        batch_name = val_item.split('/')[-1]
+
+        return batch_input_im, batch_name

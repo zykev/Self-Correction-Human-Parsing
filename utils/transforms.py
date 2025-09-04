@@ -78,6 +78,79 @@ def transform_parsing(pred, center, scale, width, height, input_size):
 
     return target_pred
 
+import torch
+import torch.nn.functional as F
+
+def cv2_to_torch_affine(trans, in_size, out_size):
+    """
+    把 OpenCV 像素坐标系的 affine (2x3) 转成 PyTorch grid_sample 的归一化 affine。
+    in_size: (H_in, W_in)
+    out_size: (H_out, W_out)
+    """
+    in_h, in_w = in_size
+    out_h, out_w = out_size
+
+    # 像素 -> 归一化 [-1,1] 的变换矩阵
+    norm_in = np.array([[2.0 / (in_w - 1), 0, -1],
+                        [0, 2.0 / (in_h - 1), -1],
+                        [0, 0, 1]], dtype=np.float32)
+
+    # 归一化 -> 像素的逆变换
+    norm_out_inv = np.array([[ (out_w - 1) / 2.0, 0, (out_w - 1) / 2.0],
+                             [0, (out_h - 1) / 2.0, (out_h - 1) / 2.0],
+                             [0, 0, 1]], dtype=np.float32)
+    
+
+    # 拼接成 3x3
+    trans_3x3 = np.vstack([trans, [0,0,1]])  # (3,3)
+
+    # 转换：归一化系下的 affine
+    theta = norm_in @ np.linalg.inv(trans_3x3) @ norm_out_inv
+    theta = theta[0:2, :]  # (2,3)
+
+    return theta
+
+def transform_parsing_torch(pred, center, scale, width, height, input_size):
+    """
+    Batch inverse affine transform for parsing maps using PyTorch.
+    Optimized for the case where center/scale are the same for all batch samples.
+
+    Args:
+        pred: (B, H, W)
+        center: (2,) tensor
+        scale: (2,) tensor
+        width: int - output width
+        height: int - output height
+        input_size: (H_in, W_in)
+
+    Returns:
+        target_pred: (B, H, W)
+    """
+    if pred.ndim == 3:
+        pred = pred.unsqueeze(1)  # (B, 1, H, W)
+
+    B, C, H, W = pred.shape
+    device = pred.device
+
+    if pred.dtype not in (torch.float32, torch.float64):
+        pred = pred.float()
+
+    # 获取仿射矩阵 (2x3)
+    trans = get_affine_transform(center, scale, 0, input_size, inv=1)  # (2,3)
+    theta = cv2_to_torch_affine(trans, input_size, (height, width))
+    theta = torch.from_numpy(theta).to(device=device, dtype=torch.float32)
+    theta = theta.unsqueeze(0).repeat(B, 1, 1)  # (B, 2, 3)
+
+    # 生成 grid 并采样
+    grid = F.affine_grid(theta, size=(B, C, height, width), align_corners=True)
+    target_pred = F.grid_sample(pred.float(), grid, mode='nearest', padding_mode='zeros', align_corners=True)
+
+    if target_pred.shape[1] == 1:
+        target_pred = target_pred.squeeze(1)  # (B, H, W)
+
+    return target_pred
+
+
 def transform_logits(logits, center, scale, width, height, input_size):
 
     trans = get_affine_transform(center, scale, 0, input_size, inv=1)
