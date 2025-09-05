@@ -277,6 +277,10 @@ class SMPLicitValSet(data.Dataset):
         #     # 'scale': s,
         #     # 'rotation': r
         # }
-        batch_name = val_item.split('/')[-1]
+        subject_id = val_item.split('/')[2]
+        outfit = val_item.split('/')[3]
+        take_id = val_item.split('/')[4]
+        img_name = val_item.split('/')[-1]
+        batch_name = '_'.join([subject_id, outfit, take_id, img_name])
 
         return batch_input_im, batch_name

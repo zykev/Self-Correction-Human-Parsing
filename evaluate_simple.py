@@ -94,14 +94,14 @@ def multi_scale_testing(model, batch_input_im, crop_size=[473, 473], flip=True, 
         interp_im = torch.nn.Upsample(scale_factor=s, mode='bilinear', align_corners=True)
         scaled_im = interp_im(batch_input_im)
         parsing_output = model(scaled_im)
-        parsing_output = parsing_output[0][-1]
-        output = parsing_output[0]
+        parsing_output = parsing_output[0][-1] # (bs, 20, h, w)
+        output = parsing_output
         if flip:
             flipped_output = parsing_output[1]
             flipped_output[14:20, :, :] = flipped_output[flipped_idx, :, :]
             output += flipped_output.flip(dims=[-1])
             output *= 0.5
-        output = interp(output.unsqueeze(0))
+        output = interp(output)
         ms_outputs.append(output)
     ms_fused_parsing_output = torch.stack(ms_outputs)
     ms_fused_parsing_output = ms_fused_parsing_output.mean(0) # (bs, 20 , h, w)
@@ -111,52 +111,6 @@ def multi_scale_testing(model, batch_input_im, crop_size=[473, 473], flip=True, 
     ms_fused_parsing_output = ms_fused_parsing_output.data
     return parsing, ms_fused_parsing_output
 
-
-
-
-def extract_files(root_folder, subject_outfit= ['Inner', 'Outer'], select_view = '0076'):
-    process_folders = []
-    for subject_id in os.listdir(root_folder):
-        subject_dir = os.path.join(root_folder, subject_id)
-        for outfit in subject_outfit:
-            outfit_dir = os.path.join(subject_dir, outfit)
-            take_dir_list = sorted(os.listdir(outfit_dir))
-            for take_id in take_dir_list:
-                take_dir = os.path.join(outfit_dir, take_id)
-                process_folders.append(take_dir)
-
-    res = []
-    for process_folder in process_folders:
-        # process folder is one task for one outfit in one subject
-        # print('Processing folder: ', process_folder)
-        path_camera = os.path.join(process_folder, 'Capture/cameras.pkl')
-        path_image = os.path.join(process_folder, 'Capture/', select_view, 'images')
-        path_smpl_prediction = os.path.join(process_folder, 'SMPL')
-        # path_segmentation = os.path.join(process_folder, 'Capture/', select_view, 'images')
-        # path_instance_segmentation = os.path.join(process_folder, 'Capture/', select_view, 'masks')
-
-
-        img_files = sorted(glob.glob(os.path.join(path_image, '*.png')))
-        img_files = [img_files[0]]
-        # mask_files = sorted(glob.glob(os.path.join(path_instance_segmentation, '*.png')))
-        smpl_files = sorted(glob.glob(os.path.join(path_smpl_prediction, '*_smpl.pkl')))
-        smpl_files = [smpl_files[0]]
-        # seg_files = sorted(glob.glob(os.path.join(path_segmentation, '*.png')))
-
-        assert len(img_files) == len(smpl_files)
-
-        # load camera
-        # K, R, T = get_cameras(camera_path=path_camera, cam_name=select_view, W=1280, H=940)
-
-        res.append({
-            'process_folder': process_folder,
-            'camera_view': select_view,
-            # 'camera_params': (K, R, T),
-            'path_image': img_files,
-            'path_smpl': smpl_files,
-        })
-
-    return res
 
 def get_segmentation_map(folder):
     """Create the model and start the evaluation process."""
@@ -252,5 +206,49 @@ def get_segmentation_map(folder):
     return parsing_res
 
 
+def extract_files(root_folder, subject_outfit= ['Inner', 'Outer'], select_view = '0004'):
+    process_folders = []
+    for subject_id in sorted(os.listdir(root_folder)):
+        if subject_id in ['00148', '00149_1', '00149_2']:
+            subject_dir = os.path.join(root_folder, subject_id)
+            for outfit in subject_outfit:
+                outfit_dir = os.path.join(subject_dir, outfit)
+                if os.path.exists(outfit_dir):
+                    take_dir_list = sorted(os.listdir(outfit_dir))
+                    for take_id in take_dir_list:
+                        take_dir = os.path.join(outfit_dir, take_id)
+                        process_folders.append(take_dir)
+                else:
+                    continue
+
+    res = []
+    for process_folder in process_folders:
+        # process folder is one task for one outfit in one subject
+        # print('Processing folder: ', process_folder)
+        path_image = os.path.join(process_folder, 'Capture/', select_view, 'images')
+        path_smpl_prediction = os.path.join(process_folder, 'SMPL')
+        # path_segmentation = os.path.join(process_folder, 'Capture/', select_view, 'images')
+        # path_instance_segmentation = os.path.join(process_folder, 'Capture/', select_view, 'masks')
+
+
+        img_files = sorted(glob.glob(os.path.join(path_image, '*.png')))
+        img_files = [img_files[0]]
+        # mask_files = sorted(glob.glob(os.path.join(path_instance_segmentation, '*.png')))
+        smpl_files = sorted(glob.glob(os.path.join(path_smpl_prediction, '*_smpl.pkl')))
+        smpl_files = [smpl_files[0]]
+        # seg_files = sorted(glob.glob(os.path.join(path_segmentation, '*.png')))
+
+        assert len(img_files) == len(smpl_files)
+
+        res.append({
+            'process_folder': process_folder,
+            'camera_view': select_view,
+            'path_image': img_files,
+            'path_smpl': smpl_files,
+        })
+
+    return res
+
 if __name__ == '__main__':
-    get_segmentation_map()
+    folders = extract_files('.datasets/4ddress')
+    get_segmentation_map(folders)
