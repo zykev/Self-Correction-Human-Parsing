@@ -7,6 +7,7 @@ import torch.nn.functional as F
 import os
 import glob
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 
 from sapiens.classes_and_palettes import GOLIATH_CLASSES, GOLIATH_PALETTE
@@ -79,48 +80,69 @@ class SapiensWrapper(nn.Module):
 
         if freeze:
             self._freeze()
+
+    def post_process(self, result, image_size):
+        # result: (bs, 28, h, w)
+        # 只需要16和27的结果: lower clothing and upper clothing
+        # seg_logits resize 到原图大小
+        seg_logits = F.interpolate(
+            result, size=image_size, mode="bilinear", align_corners=False
+        )
+
+        pred_sem_seg = seg_logits.argmax(dim=1) # （bs, h, w）
+
+        # palette mask
+        # 建立一个查找表，把原来的 16, 27 映射到 1, 2，其余为 0
+        mapping = torch.zeros((seg_logits.shape[1],), dtype=torch.long, device=pred_sem_seg.device)
+        mapping[12] = 1
+        mapping[22] = 2
+
+        # 直接用索引映射生成 mask
+        mask = mapping[pred_sem_seg]  # (bs, h, w)
         
+        return mask
+
+
     def seg_save_and_viz(
-        self, image, result, image_name, 
+        self, image_size, result, image_name, 
         classes=GOLIATH_CLASSES, palette=GOLIATH_PALETTE, save_vis=False, title=None, threshold=0.3,
     ):
 
-        if save_vis:
-            save_vis_path = os.path.join(self.save_dir, image_name)
-            # image: [C,H,W] -> [H,W,C], float [0,1]
-            image = image.permute(1, 2, 0).cpu().numpy()
-            image_uint8 = (np.clip(image, 0, 1) * 255).astype(np.uint8)  # 转成 uint8
+        if not save_vis:
+            return
 
-            # seg_logits resize 到原图大小
-            seg_logits = F.interpolate(
-                result.unsqueeze(0), size=image.shape[:2], mode="bilinear", align_corners=False
-            ).squeeze(0)
+        save_vis_path = os.path.join(self.save_dir, image_name)
+        # image: [C,H,W] -> [H,W,C], float [0,1]
+        image = image.permute(1, 2, 0).cpu().numpy()
 
-            if seg_logits.shape[0] > 1:
-                pred_sem_seg = seg_logits.argmax(dim=0).cpu().numpy()
-            else:
-                seg_logits = seg_logits.sigmoid()
-                pred_sem_seg = (seg_logits > threshold).cpu().numpy().astype(np.uint8)
+        # seg_logits resize 到原图大小
+        seg_logits = F.interpolate(
+            result.unsqueeze(0), size=image_size, mode="bilinear", align_corners=False
+        ).squeeze(0)
 
-            # palette mask
-            num_classes = len(classes)
-            ids = np.unique(pred_sem_seg)[::-1]
-            legal_indices = ids < num_classes
-            ids = ids[legal_indices]
-            colors = [palette[label] for label in ids]
+        if seg_logits.shape[0] > 1:
+            pred_sem_seg = seg_logits.argmax(dim=0).cpu().numpy()
+        else:
+            seg_logits = seg_logits.sigmoid()
+            pred_sem_seg = (seg_logits > threshold).cpu().numpy().astype(np.uint8)
 
-            mask = np.zeros_like(image_uint8)
-            for label, color in zip(ids, colors):
-                mask[pred_sem_seg == label] = color
+        # palette mask
+        num_classes = len(classes)
+        ids = np.unique(pred_sem_seg)[::-1]
+        legal_indices = ids < num_classes
+        ids = ids[legal_indices]
+        colors = [palette[label] for label in ids]
 
-            # 可视化合成
-            vis_image = mask.astype(np.uint8)
+        mask = np.zeros_like(image)
+        for label, color in zip(ids, colors):
+            mask[pred_sem_seg == label] = color
 
-            # 拼接左右
-            vis_image = cv2.cvtColor(vis_image, cv2.COLOR_RGB2BGR)
+        # 可视化
+        vis_image = mask.astype(np.uint8)
+        vis_image = cv2.cvtColor(vis_image, cv2.COLOR_RGB2BGR)
 
-            # 保存
-            cv2.imwrite(save_vis_path, vis_image)
+        # 保存
+        cv2.imwrite(save_vis_path, vis_image)
         
     def forward(self, image):
 
@@ -180,18 +202,34 @@ def extract_files(root_folder, subject_outfit= ['Inner', 'Outer'], select_view =
     return res
 
 
-
-if __name__ == "__main__":
-    model = SapiensWrapper()
+def get_segmentation_sapiens(folders, device='cuda:0'):
+    model = SapiensWrapper().to(device)
     model.eval()
 
-
-    folders = extract_files('.datasets/4ddress')
     dataset = SapiensSet(folders)
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
-    for i, (image, batch_name) in enumerate(dataloader):
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=8, shuffle=False, num_workers=4)
+    parsing_res = []
+    for i, (image, batch_name) in enumerate(tqdm(dataloader)):
+        image = image.to(device)
         output = model(image) # (bs, 28, h, w)
-
+        # 只需要16和27的结果
+        output = model.post_process(output, image_size=[1280, 940]) # (bs, h, w)
+        parsing_res.append(output)
+        
         for bs in range(image.shape[0]):
-            model.seg_save_and_viz(image[bs], output[bs], batch_name[bs], save_vis=True)
+            model.seg_save_and_viz(image[bs], output[bs], batch_name[bs], save_vis=False)
 
+    parsing_res = torch.vstack(parsing_res)
+
+    # ===== 清理模型和 CUDA 缓存 =====
+    del model
+    torch.cuda.empty_cache()
+    torch.cuda.synchronize()
+
+    return parsing_res
+
+
+if __name__ == "__main__":
+    folders = extract_files('.datasets/4ddress')
+    parsing_res = get_segmentation_sapiens(folders, device='cuda:0')
+    print(parsing_res.shape)
