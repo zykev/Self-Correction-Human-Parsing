@@ -201,7 +201,7 @@ class LIPDataValSet(data.Dataset):
         return batch_input_im, meta
 
 class SMPLicitValSet(data.Dataset):
-    def __init__(self, folders, crop_size=[473, 473], img_size=[1280, 940], transform=None, flip=False):
+    def __init__(self, folders, crop_size=[473, 473], image_size=[1280, 940], transform=None, flip=False):
         self.crop_size = crop_size
         self.transform = transform
         self.flip = flip
@@ -212,8 +212,8 @@ class SMPLicitValSet(data.Dataset):
         self.number_samples = len(self.val_list)
 
         # Get person center and scale
-        self.w = img_size[1] - 1
-        self.h = img_size[0] - 1
+        self.w = image_size[1] - 1
+        self.h = image_size[0] - 1
         self.person_center, self.s = self._box2cs()
 
     def __len__(self):

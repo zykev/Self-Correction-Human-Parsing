@@ -112,7 +112,7 @@ def multi_scale_testing(model, batch_input_im, crop_size=[473, 473], flip=True, 
     return parsing, ms_fused_parsing_output
 
 
-def get_segmentation_map(folder):
+def get_segmentation_map(folder, image_size=[1280, 940]):
     """Create the model and start the evaluation process."""
     args = get_arguments()
     multi_scales = [float(i) for i in args.multi_scales.split(',')]
@@ -150,7 +150,7 @@ def get_segmentation_map(folder):
 
     # Data loader
     # folder = extract_files(args.data_dir)
-    lip_test_dataset = SMPLicitValSet(folder, crop_size=input_size, transform=transform, flip=args.flip)
+    lip_test_dataset = SMPLicitValSet(folder, crop_size=input_size, image_size=image_size, transform=transform, flip=args.flip)
     num_samples = len(lip_test_dataset)
     print('Totoal testing sample numbers: {}'.format(num_samples))
     testloader = data.DataLoader(lip_test_dataset, batch_size=args.batch_size, shuffle=False, pin_memory=True)
@@ -251,4 +251,4 @@ def extract_files(root_folder, subject_outfit= ['Inner', 'Outer'], select_view =
 
 if __name__ == '__main__':
     folders = extract_files('.datasets/4ddress')
-    get_segmentation_map(folders)
+    get_segmentation_map(folders, [1280, 940])

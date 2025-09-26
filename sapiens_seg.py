@@ -202,7 +202,7 @@ def extract_files(root_folder, subject_outfit= ['Inner', 'Outer'], select_view =
     return res
 
 
-def get_segmentation_sapiens(folders, device='cuda:0'):
+def get_segmentation_sapiens(folders, image_size=[1280, 940], device='cuda:0'):
     model = SapiensWrapper().to(device)
     model.eval()
 
@@ -213,7 +213,7 @@ def get_segmentation_sapiens(folders, device='cuda:0'):
         image = image.to(device)
         output = model(image) # (bs, 28, h, w)
         # 只需要16和27的结果
-        output = model.post_process(output, image_size=[1280, 940]) # (bs, h, w)
+        output = model.post_process(output, image_size=image_size) # (bs, h, w)
         parsing_res.append(output)
         
         for bs in range(image.shape[0]):
